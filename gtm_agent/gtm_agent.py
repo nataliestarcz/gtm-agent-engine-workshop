@@ -34,6 +34,21 @@ from . import data_service
 from .data_service import REP_IDS
 
 MODEL_NAME = "gpt-4o-mini"
+SENSITIVE_PROSPECT_FIELDS = ("billing_qualification",)
+SCORING_PROSPECT_FIELDS = (
+    "prospect_id",
+    "name",
+    "account_details",
+    "tech_stack",
+    "annual_revenue",
+    "segment",
+    "target_segment",
+)
+
+
+def _redact_prospect(record):
+    "Return a prospect record without sensitive fields."
+    return {key: value for key, value in record.items() if key not in SENSITIVE_PROSPECT_FIELDS}
 
 # ---------------------------------------------------------------------------
 # Tools
@@ -58,7 +73,7 @@ def build_prospect_profile(prospect_id: str) -> dict:
         return {"prospect_profile": None, "found": False}
     built = {
         "prospect_id": prospect_id,
-        **rec,
+        **_redact_prospect(rec),
         "engagement_history": data_service.fetch_engagement_history(prospect_id),
         "account_details": data_service.fetch_account_details(prospect_id),
         "tech_stack": data_service.fetch_tech_stack(prospect_id),
@@ -111,9 +126,14 @@ def score_prospect(prospect_profile: dict, offering: dict | None = None) -> dict
     pid = prospect_profile.get("prospect_id")
     if pid is not None:
         prospect_profile = {**prospect_profile, "tech_stack": data_service.fetch_tech_stack(pid)}
+    scoring_profile = {
+        key: prospect_profile[key]
+        for key in SCORING_PROSPECT_FIELDS
+        if key in prospect_profile
+    }
     user = (
         "Offering:\n" + json.dumps(offering, indent=2) +
-        "\n\nProspect profile:\n" + json.dumps(prospect_profile, indent=2)
+        "\n\nProspect profile:\n" + json.dumps(scoring_profile, indent=2)
     )
     result = _scoring_llm.invoke([
         {"role": "system", "content": SCORING_PROMPT},
@@ -132,7 +152,7 @@ def get_prospect(prospect_id: str) -> dict:
     # caller can pull from build_prospect_profile instead.
     contact = {
         "prospect_id": prospect_id,
-        **{k: v for k, v in record.items()
+        **{k: v for k, v in _redact_prospect(record).items()
            if k not in ("engagement_history", "account_details", "tech_stack")},
     }
     return {"prospect": contact, "found": True}
